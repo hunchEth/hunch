@@ -2,3 +2,9 @@
 name = "hunch"
 version = "0.1.0"
 edition = "2024"
+
+[dependencies]
+stylus-sdk = "0.10.9"
+
+[lib]
+crate-type = ["lib", "cdylib"]
