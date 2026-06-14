@@ -25,3 +25,9 @@ impl Rng {
         self.0 = x;
         x.wrapping_mul(0x2545F4914F6CDD1D)
     }
+    /// uniform in [-limit, limit] (Q16)
+    pub fn sym(&mut self, limit: i64) -> i64 {
+        let r = (self.next() >> 33) as i64; // 31 bits
+        (r % (2 * limit + 1)) - limit
+    }
+}
