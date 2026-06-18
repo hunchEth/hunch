@@ -31,3 +31,8 @@ impl Rng {
         (r % (2 * limit + 1)) - limit
     }
 }
+
+/// Layout: w1[IN*H] | b1[H] | w2[H] | b2[1]  (all Q16)
+pub fn param_count(h: usize) -> usize {
+    IN * h + h + h + 1
+}
