@@ -36,3 +36,9 @@ impl Rng {
 pub fn param_count(h: usize) -> usize {
     IN * h + h + h + 1
 }
+
+pub fn init_weights(h: usize, seed: u64) -> Vec<i64> {
+    let mut rng = Rng(seed | 1);
+    let limit = ONE / 20; // +-0.05
+    (0..param_count(h)).map(|_| rng.sym(limit)).collect()
+}
