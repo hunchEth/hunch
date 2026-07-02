@@ -42,3 +42,11 @@ pub fn init_weights(h: usize, seed: u64) -> Vec<i64> {
     let limit = ONE / 20; // +-0.05
     (0..param_count(h)).map(|_| rng.sym(limit)).collect()
 }
+
+/// Forward pass. Returns (prediction, hidden activations).
+pub fn forward(w: &[i64], h: usize, x: &[i64; IN]) -> (i64, Vec<i64>) {
+    let (w1, rest) = w.split_at(IN * h);
+    let (b1, rest) = rest.split_at(h);
+    let (w2, b2) = rest.split_at(h);
+    let mut z = vec![0i64; h];
+    for j in 0..h {
