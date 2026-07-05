@@ -50,3 +50,9 @@ pub fn forward(w: &[i64], h: usize, x: &[i64; IN]) -> (i64, Vec<i64>) {
     let (w2, b2) = rest.split_at(h);
     let mut z = vec![0i64; h];
     for j in 0..h {
+        let mut acc = b1[j];
+        for i in 0..IN {
+            acc += qmul(w1[j * IN + i], x[i]);
+        }
+        z[j] = acc.max(0); // ReLU
+    }
