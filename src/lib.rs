@@ -2,3 +2,13 @@
 extern crate alloc;
 
 pub mod net;
+
+use stylus_sdk::prelude::*;
+
+sol_storage! {
+    #[entrypoint]
+    pub struct Brain {
+        uint256[] packed;
+        uint64 hidden;
+    }
+}
