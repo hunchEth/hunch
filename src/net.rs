@@ -56,3 +56,9 @@ pub fn forward(w: &[i64], h: usize, x: &[i64; IN]) -> (i64, Vec<i64>) {
         }
         z[j] = acc.max(0); // ReLU
     }
+    let mut y = b2[0];
+    for j in 0..h {
+        y += qmul(w2[j], z[j]);
+    }
+    (y, z)
+}
