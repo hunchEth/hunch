@@ -62,3 +62,9 @@ pub fn forward(w: &[i64], h: usize, x: &[i64; IN]) -> (i64, Vec<i64>) {
     }
     (y, z)
 }
+
+/// One SGD step on one sample. Updates weights in place.
+/// Returns squared error (Q16). lr_shift: update = grad >> lr_shift.
+pub fn lesson(w: &mut [i64], h: usize, x: &[i64; IN], target: i64, lr_shift: u32) -> i64 {
+    let (y, z) = forward(w, h, x);
+    let e = (y - target).clamp(-(ONE * 64), ONE * 64);
