@@ -21,3 +21,11 @@ sol_storage! {
         uint64 lessons;
     }
 }
+
+fn pack(vals: &[i64]) -> U256 {
+    let mut limbs = [0u64; 4];
+    for (k, v) in vals.iter().enumerate() {
+        limbs[k] = *v as u64;
+    }
+    U256::from_limbs(limbs)
+}
