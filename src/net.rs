@@ -68,3 +68,6 @@ pub fn forward(w: &[i64], h: usize, x: &[i64; IN]) -> (i64, Vec<i64>) {
 pub fn lesson(w: &mut [i64], h: usize, x: &[i64; IN], target: i64, lr_shift: u32) -> i64 {
     let (y, z) = forward(w, h, x);
     let e = (y - target).clamp(-(ONE * 64), ONE * 64);
+    let (w1, rest) = w.split_at_mut(IN * h);
+    let (b1, rest) = rest.split_at_mut(h);
+    let (w2, b2) = rest.split_at_mut(h);
