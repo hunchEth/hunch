@@ -29,3 +29,9 @@ fn pack(vals: &[i64]) -> U256 {
     }
     U256::from_limbs(limbs)
 }
+
+fn unpack(word: U256, out: &mut Vec<i64>, remaining: usize) {
+    for k in 0..4.min(remaining) {
+        out.push(word.as_limbs()[k] as i64);
+    }
+}
