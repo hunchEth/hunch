@@ -71,3 +71,9 @@ pub fn lesson(w: &mut [i64], h: usize, x: &[i64; IN], target: i64, lr_shift: u32
     let (w1, rest) = w.split_at_mut(IN * h);
     let (b1, rest) = rest.split_at_mut(h);
     let (w2, b2) = rest.split_at_mut(h);
+    // output layer
+    for j in 0..h {
+        let g = qmul(e, z[j]);
+        w2[j] -= g >> lr_shift;
+    }
+    b2[0] -= e >> lr_shift;
