@@ -35,3 +35,18 @@ fn unpack(word: U256, out: &mut Vec<i64>, remaining: usize) {
         out.push(word.as_limbs()[k] as i64);
     }
 }
+
+impl Brain {
+    /// Read every weight slot into memory.
+    fn read_weights(&self) -> Vec<i64> {
+        let h = self.hidden.get().to::<u64>() as usize;
+        let n = param_count(h);
+        let slots = n.div_ceil(4);
+        let mut w = Vec::with_capacity(n);
+        for s in 0..slots {
+            unpack(self.packed.get(s).unwrap(), &mut w, n - s * 4);
+        }
+        w
+    }
+
+}
