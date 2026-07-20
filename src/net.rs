@@ -77,3 +77,13 @@ pub fn lesson(w: &mut [i64], h: usize, x: &[i64; IN], target: i64, lr_shift: u32
         w2[j] -= g >> lr_shift;
     }
     b2[0] -= e >> lr_shift;
+    // hidden layer
+    for j in 0..h {
+        if z[j] > 0 {
+            let d = qmul(e, w2[j]);
+            for i in 0..IN {
+                w1[j * IN + i] -= qmul(d, x[i]) >> lr_shift;
+            }
+            b1[j] -= d >> lr_shift;
+        }
+    }
