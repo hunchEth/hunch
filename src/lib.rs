@@ -50,3 +50,16 @@ impl Brain {
     }
 
 }
+
+#[public]
+impl Brain {
+    /// One-time setup: hidden size, PRNG seed for weights, learning-rate shift.
+    pub fn init(&mut self, hidden: u64, seed: u64, lr_shift: u64) {
+        if self.hidden.get().to::<u64>() != 0 {
+            return;
+        }
+        let h = hidden as usize;
+        let w = init_weights(h, seed);
+        let mut i = 0;
+        while i < w.len() {
+            let end = (i + 4).min(w.len());
