@@ -87,3 +87,5 @@ pub fn lesson(w: &mut [i64], h: usize, x: &[i64; IN], target: i64, lr_shift: u32
             b1[j] -= d >> lr_shift;
         }
     }
+    qmul(e, e)
+}
