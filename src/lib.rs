@@ -63,3 +63,9 @@ impl Brain {
         let mut i = 0;
         while i < w.len() {
             let end = (i + 4).min(w.len());
+            self.packed.push(pack(&w[i..end]));
+            i = end;
+        }
+        self.hidden.set(U64::from(hidden));
+        self.lr_shift.set(U64::from(lr_shift));
+    }
