@@ -22,3 +22,6 @@ strip = true
 lto = true
 panic = "abort"
 opt-level = 3
+
+[dev-dependencies]
+stylus-sdk = { version = "0.10.9", features = ["stylus-test"] }
