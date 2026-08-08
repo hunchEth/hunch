@@ -69,3 +69,11 @@ impl Brain {
         self.hidden.set(U64::from(hidden));
         self.lr_shift.set(U64::from(lr_shift));
     }
+
+    /// Pure inference, free via eth_call.
+    pub fn predict(&self, x: Vec<i64>) -> i64 {
+        let h = self.hidden.get().to::<u64>() as usize;
+        let mut xin = [0i64; IN];
+        xin.copy_from_slice(&x[..IN]);
+        forward(&self.read_weights(), h, &xin).0
+    }
