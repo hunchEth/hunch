@@ -77,3 +77,15 @@ impl Brain {
         xin.copy_from_slice(&x[..IN]);
         forward(&self.read_weights(), h, &xin).0
     }
+
+    /// One on-chain SGD step. Persists at most `write_cap` slots (round-robin),
+    /// so storage gas is bounded; unpersisted deltas are dropped by design.
+    /// Returns squared error (Q16).
+    pub fn lesson(&mut self, x: Vec<i64>, target: i64, write_cap: u64) -> u64 {
+        let h = self.hidden.get().to::<u64>() as usize;
+        let lr = self.lr_shift.get().to::<u64>() as u32;
+        let mut xin = [0i64; IN];
+        xin.copy_from_slice(&x[..IN]);
+
+        let mut w = self.read_weights();
+        let err2 = sgd_lesson(&mut w, h, &xin, target, lr);
