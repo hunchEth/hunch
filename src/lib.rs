@@ -89,3 +89,12 @@ impl Brain {
 
         let mut w = self.read_weights();
         let err2 = sgd_lesson(&mut w, h, &xin, target, lr);
+
+        let slots = w.len().div_ceil(4);
+        let cap = (write_cap as usize).min(slots);
+        let start = self.cursor.get().to::<u64>() as usize % slots;
+        for k in 0..cap {
+            let s = (start + k) % slots;
+            let end = (s * 4 + 4).min(w.len());
+            self.packed.setter(s).unwrap().set(pack(&w[s * 4..end]));
+        }
