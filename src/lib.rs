@@ -98,3 +98,6 @@ impl Brain {
             let end = (s * 4 + 4).min(w.len());
             self.packed.setter(s).unwrap().set(pack(&w[s * 4..end]));
         }
+        self.cursor.set(U64::from(((start + cap) % slots) as u64));
+        self.lessons.set(U64::from(self.lessons.get().to::<u64>() + 1));
+        err2 as u64
