@@ -101,3 +101,9 @@ impl Brain {
         self.cursor.set(U64::from(((start + cap) % slots) as u64));
         self.lessons.set(U64::from(self.lessons.get().to::<u64>() + 1));
         err2 as u64
+    }
+
+    pub fn lessons_done(&self) -> u64 {
+        self.lessons.get().to::<u64>()
+    }
+}
