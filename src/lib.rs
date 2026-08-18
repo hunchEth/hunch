@@ -107,3 +107,14 @@ impl Brain {
         self.lessons.get().to::<u64>()
     }
 }
+
+#[cfg(test)]
+mod sim {
+    use super::net::*;
+    use alloc::vec::Vec;
+
+    /// GARCH(1,1) return generator (f64), quantized to Q16 with x100 scale.
+    struct Garch {
+        rng: Rng,
+        sigma2: f64,
+    }
