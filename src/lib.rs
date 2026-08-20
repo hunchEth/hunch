@@ -118,3 +118,18 @@ mod sim {
         rng: Rng,
         sigma2: f64,
     }
+    impl Garch {
+        fn new(seed: u64) -> Self {
+            Garch { rng: Rng(seed), sigma2: 1e-4 }
+        }
+        fn next_ret(&mut self) -> f64 {
+            // approx normal: sum of 12 uniforms - 6
+            let mut n = -6.0;
+            for _ in 0..12 {
+                n += (self.rng.next() >> 11) as f64 / (1u64 << 53) as f64;
+            }
+            let r = self.sigma2.sqrt() * n;
+            self.sigma2 = 3e-6 + 0.12 * r * r + 0.85 * self.sigma2;
+            r
+        }
+    }
