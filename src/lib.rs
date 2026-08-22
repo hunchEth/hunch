@@ -133,3 +133,13 @@ mod sim {
             r
         }
     }
+
+    fn q16(v: f64) -> i64 {
+        (v * ONE as f64) as i64
+    }
+
+    /// Online learning on GARCH data; returns (mse_net, mse_baseline) over the
+    /// final quarter. `cap_frac_4` = persisted slots per lesson in quarters
+    /// (4 = full persistence, 1 = 25% of slots round-robin).
+    fn run(h: usize, lr_shift: u32, cap_frac_4: usize, steps: usize) -> (f64, f64) {
+        const W: usize = 16;
