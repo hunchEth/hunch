@@ -143,3 +143,28 @@ mod sim {
     /// (4 = full persistence, 1 = 25% of slots round-robin).
     fn run(h: usize, lr_shift: u32, cap_frac_4: usize, steps: usize) -> (f64, f64) {
         const W: usize = 16;
+        let mut g = Garch::new(0xC0FFEE);
+        let rets: Vec<f64> = (0..steps + 2 * W).map(|_| g.next_ret().abs() * 100.0).collect();
+
+        let mut w = init_weights(h, 7);
+        let slots = w.len().div_ceil(4);
+        let cap = (slots * cap_frac_4 / 4).max(1);
+        let mut cursor = 0usize;
+
+        let mut base = q16(1.0); // running-mean baseline (EWMA)
+        let (mut se_net, mut se_base, mut cnt) = (0f64, 0f64, 0u64);
+
+        for t in W..steps {
+            let mut x = [0i64; IN];
+            for i in 0..IN {
+                x[i] = q16(rets[t - W + i]);
+            }
+            let target = q16(rets[t..t + W].iter().sum::<f64>() / W as f64);
+
+            let (y, _) = forward(&w, h, &x);
+            if t > steps * 3 / 4 {
+                let ef = (y - target) as f64 / ONE as f64;
+                let eb = (base - target) as f64 / ONE as f64;
+                se_net += ef * ef;
+                se_base += eb * eb;
+                cnt += 1;
