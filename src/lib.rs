@@ -168,3 +168,19 @@ mod sim {
                 se_net += ef * ef;
                 se_base += eb * eb;
                 cnt += 1;
+            }
+
+            // partial persistence: train a copy, keep only `cap` slots
+            let mut trained = w.clone();
+            lesson(&mut trained, h, &x, target, lr_shift);
+            for k in 0..cap {
+                let s = (cursor + k) % slots;
+                let end = (s * 4 + 4).min(w.len());
+                w[s * 4..end].copy_from_slice(&trained[s * 4..end]);
+            }
+            cursor = (cursor + cap) % slots;
+
+            base = base + (target - base) / 64; // EWMA baseline
+        }
+        (se_net / cnt as f64, se_base / cnt as f64)
+    }
