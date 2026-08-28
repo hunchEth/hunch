@@ -184,3 +184,10 @@ mod sim {
         }
         (se_net / cnt as f64, se_base / cnt as f64)
     }
+
+    #[test]
+    fn learns_vol_full_persistence() {
+        let (net, base) = run(32, 11, 4, 40_000);
+        std::println!("full persistence: net mse {net:.5} vs baseline {base:.5}");
+        assert!(net < base * 0.9, "net {net} not < 0.9x baseline {base}");
+    }
