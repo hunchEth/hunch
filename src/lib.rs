@@ -191,3 +191,10 @@ mod sim {
         std::println!("full persistence: net mse {net:.5} vs baseline {base:.5}");
         assert!(net < base * 0.9, "net {net} not < 0.9x baseline {base}");
     }
+
+    #[test]
+    fn learns_vol_quarter_persistence() {
+        let (net, base) = run(32, 11, 1, 40_000);
+        std::println!("quarter persistence: net mse {net:.5} vs baseline {base:.5}");
+        assert!(net < base, "net {net} not < baseline {base}");
+    }
