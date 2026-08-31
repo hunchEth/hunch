@@ -213,3 +213,28 @@ mod sim {
         let mut base = q16(1.0);
         let (mut se_net, mut se_base, mut cnt) = (0f64, 0f64, 0u64);
         for t in W..steps {
+            let mut x = [0i64; IN];
+            for i in 0..IN {
+                x[i] = q16(rets[t - W + i]);
+            }
+            let target = q16(rets[t..t + W].iter().sum::<f64>() / W as f64);
+            let (y, _) = forward(&w, h, &x);
+            if t > steps * 3 / 4 {
+                let ef = (y - target) as f64 / ONE as f64;
+                let eb = (base - target) as f64 / ONE as f64;
+                se_net += ef * ef;
+                se_base += eb * eb;
+                cnt += 1;
+            }
+            batch.push((x, target));
+            if batch.len() == 4 {
+                for (bx, bt) in batch.drain(..) {
+                    lesson(&mut w, h, &bx, bt, lr_shift);
+                }
+            }
+            base = base + (target - base) / 64;
+        }
+        let (net, base) = (se_net / cnt as f64, se_base / cnt as f64);
+        std::println!("batched writes: net mse {net:.5} vs baseline {base:.5}");
+        assert!(net < base * 0.9, "net {net} not < 0.9x baseline {base}");
+    }
