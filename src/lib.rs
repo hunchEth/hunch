@@ -198,3 +198,18 @@ mod sim {
         std::println!("quarter persistence: net mse {net:.5} vs baseline {base:.5}");
         assert!(net < base, "net {net} not < baseline {base}");
     }
+
+    /// Scheme B: buffer samples, apply 4 SGD steps + one full weight write
+    /// every 4th crank. Same write gas as 25% round-robin, full learning.
+    #[test]
+    fn learns_vol_batched_writes() {
+        const W: usize = 16;
+        let steps = 40_000;
+        let (h, lr_shift) = (32usize, 11u32);
+        let mut g = Garch::new(0xC0FFEE);
+        let rets: Vec<f64> = (0..steps + 2 * W).map(|_| g.next_ret().abs() * 100.0).collect();
+        let mut w = init_weights(h, 7);
+        let mut batch: Vec<([i64; IN], i64)> = Vec::new();
+        let mut base = q16(1.0);
+        let (mut se_net, mut se_base, mut cnt) = (0f64, 0f64, 0u64);
+        for t in W..steps {
