@@ -1,15 +1,29 @@
-//! An MLP that lives in chain storage: forward pass, backprop and SGD all
-//! run inside the contract. Weights are packed 4 x i64 per storage slot.
-//! `write_cap` bounds how many slots persist per lesson (round-robin), so
-//! the write-gas cost is tunable independently of brain size.
+//! HUNCH: an MLP that lives in chain storage and feeds itself.
+//! `lesson()` takes no arguments: the brain reads its Chainlink feed, measures
+//! the gap since the last beat, grades its previous hunch, runs backprop and
+//! SGD in place, and forms the next hunch. Nobody can teach it a lie, because
+//! nobody gets to hand it inputs. Weights are packed 4 x i64 per slot.
 #![cfg_attr(not(any(test, feature = "export-abi")), no_main)]
 extern crate alloc;
 
 pub mod net;
 
 use alloc::vec::Vec;
-use net::{forward, init_weights, lesson as sgd_lesson, param_count, IN};
-use stylus_sdk::{alloy_primitives::{aliases::U64, U256}, prelude::*};
+use net::{feat_gap, features, forward, init_weights, lesson as sgd_lesson, param_count, IN};
+use stylus_sdk::{
+    alloy_primitives::{
+        aliases::{I64, U64, U80},
+        Address, U256,
+    },
+    prelude::*,
+};
+
+sol_interface! {
+    interface IAggregator {
+        function latestRoundData() external view returns (uint80, int256, uint256, uint256, uint80);
+        function getRoundData(uint80 round) external view returns (uint80, int256, uint256, uint256, uint80);
+    }
+}
 
 sol_storage! {
     #[entrypoint]
@@ -17,7 +31,14 @@ sol_storage! {
         uint256[] packed;
         uint64 hidden;
         uint64 lr_shift;
-        uint64 cursor;
+        address feed;
+        uint256 last_round;
+        uint64 last_t;
+        uint64 beats_seen;
+        uint256 gaps_lo;   // gaps[0..8], oldest lanes first, u32 each
+        uint256 gaps_hi;   // gaps[8..16]
+        int64 pending;     // Q16 hunch for the next gap
+        uint64 has_pending;
         uint64 lessons;
     }
 }
@@ -36,8 +57,26 @@ fn unpack(word: U256, out: &mut Vec<i64>, remaining: usize) {
     }
 }
 
+fn gaps_pack(g: &[u32; 16]) -> (U256, U256) {
+    let mut lo = [0u64; 4];
+    let mut hi = [0u64; 4];
+    for i in 0..8 {
+        lo[i / 2] |= (g[i] as u64) << (32 * (i % 2));
+        hi[i / 2] |= (g[8 + i] as u64) << (32 * (i % 2));
+    }
+    (U256::from_limbs(lo), U256::from_limbs(hi))
+}
+
+fn gaps_unpack(lo: U256, hi: U256) -> [u32; 16] {
+    let mut g = [0u32; 16];
+    for i in 0..8 {
+        g[i] = (lo.as_limbs()[i / 2] >> (32 * (i % 2))) as u32;
+        g[8 + i] = (hi.as_limbs()[i / 2] >> (32 * (i % 2))) as u32;
+    }
+    g
+}
+
 impl Brain {
-    /// Read every weight slot into memory.
     fn read_weights(&self) -> Vec<i64> {
         let h = self.hidden.get().to::<u64>() as usize;
         let n = param_count(h);
@@ -49,14 +88,33 @@ impl Brain {
         w
     }
 
+    fn write_weights(&mut self, w: &[i64]) {
+        let slots = w.len().div_ceil(4);
+        for s in 0..slots {
+            let end = (s * 4 + 4).min(w.len());
+            self.packed.setter(s).unwrap().set(pack(&w[s * 4..end]));
+        }
+    }
+
+    fn push_gap(&mut self, gap: u32) {
+        let mut g = gaps_unpack(self.gaps_lo.get(), self.gaps_hi.get());
+        g.rotate_left(1);
+        g[15] = gap;
+        let (lo, hi) = gaps_pack(&g);
+        self.gaps_lo.set(lo);
+        self.gaps_hi.set(hi);
+        self.beats_seen.set(U64::from(self.beats_seen.get().to::<u64>() + 1));
+    }
 }
 
 #[public]
 impl Brain {
-    /// One-time setup: hidden size, PRNG seed for weights, learning-rate shift.
-    pub fn init(&mut self, hidden: u64, seed: u64, lr_shift: u64) {
+    /// One-time setup: feed to listen to, hidden size, weight seed, learning
+    /// rate shift. Walks 16 rounds back so the brain wakes up with a full
+    /// window and can learn from the very next beat.
+    pub fn init(&mut self, feed: Address, hidden: u64, seed: u64, lr_shift: u64) -> Result<(), Vec<u8>> {
         if self.hidden.get().to::<u64>() != 0 {
-            return;
+            return Err(b"already alive".to_vec());
         }
         let h = hidden as usize;
         let w = init_weights(h, seed);
@@ -68,9 +126,95 @@ impl Brain {
         }
         self.hidden.set(U64::from(hidden));
         self.lr_shift.set(U64::from(lr_shift));
+        self.feed.set(feed);
+
+        let agg = IAggregator::new(feed);
+        let (round, _, _, updated, _) = agg.latest_round_data(self.vm(), Call::new())?;
+        self.last_round.set(U256::from(round));
+        self.last_t.set(U64::from(updated.to::<u64>()));
+
+        // walk back: collect up to 17 timestamps, oldest last in the walk
+        let mut ts = Vec::with_capacity(17);
+        ts.push(updated.to::<u64>());
+        for k in 1u64..17 {
+            let r = round - U80::from(k);
+            let agg = IAggregator::new(feed);
+            match agg.get_round_data(self.vm(), Call::new(), r) {
+                Ok((_, _, _, u, _)) => {
+                    let t = u.to::<u64>();
+                    if t == 0 { break; }
+                    ts.push(t);
+                }
+                Err(_) => break,
+            }
+        }
+        ts.reverse(); // oldest first
+        let mut g = [0u32; 16];
+        let have = ts.len().saturating_sub(1);
+        for i in 0..have {
+            g[16 - have + i] = (ts[i + 1] - ts[i]).max(1) as u32;
+        }
+        let (lo, hi) = gaps_pack(&g);
+        self.gaps_lo.set(lo);
+        self.gaps_hi.set(hi);
+        self.beats_seen.set(U64::from(have as u64));
+
+        if have >= 16 {
+            let x = features(&g);
+            let w = self.read_weights();
+            let p = forward(&w, h, &x).0;
+            self.pending.set(I64::try_from(p).unwrap_or_default());
+            self.has_pending.set(U64::from(1u64));
+        }
+        Ok(())
     }
 
-    /// Pure inference, free via eth_call.
+    /// The bell. Anyone may ring it once a new beat exists. The brain reads
+    /// the feed itself, grades its old hunch, learns, and forms a new one.
+    /// Returns the squared error of the graded hunch (0 while warming up).
+    pub fn lesson(&mut self) -> Result<u64, Vec<u8>> {
+        let feed = self.feed.get();
+        if feed == Address::ZERO {
+            return Err(b"not born yet".to_vec());
+        }
+        let agg = IAggregator::new(feed);
+        let (round, _, _, updated, _) = agg.latest_round_data(self.vm(), Call::new())?;
+        if U256::from(round) <= self.last_round.get() {
+            return Err(b"no new beat".to_vec());
+        }
+        let h = self.hidden.get().to::<u64>() as usize;
+        let lr = self.lr_shift.get().to::<u64>() as u32;
+        let gap = updated.to::<u64>().saturating_sub(self.last_t.get().to::<u64>()).max(1);
+
+        let mut err2 = 0u64;
+        let mut w: Option<Vec<i64>> = None;
+        if self.beats_seen.get().to::<u64>() >= 16 && self.has_pending.get().to::<u64>() == 1 {
+            let g = gaps_unpack(self.gaps_lo.get(), self.gaps_hi.get());
+            let x = features(&g);
+            let target = feat_gap(gap);
+            let mut ww = self.read_weights();
+            err2 = sgd_lesson(&mut ww, h, &x, target, lr) as u64;
+            self.write_weights(&ww);
+            self.lessons.set(U64::from(self.lessons.get().to::<u64>() + 1));
+            w = Some(ww);
+        }
+
+        self.push_gap(gap as u32);
+        self.last_round.set(U256::from(round));
+        self.last_t.set(U64::from(updated.to::<u64>()));
+
+        if self.beats_seen.get().to::<u64>() >= 16 {
+            let g = gaps_unpack(self.gaps_lo.get(), self.gaps_hi.get());
+            let x = features(&g);
+            let ww = w.unwrap_or_else(|| self.read_weights());
+            let p = forward(&ww, h, &x).0;
+            self.pending.set(I64::try_from(p).unwrap_or_default());
+            self.has_pending.set(U64::from(1u64));
+        }
+        Ok(err2)
+    }
+
+    /// Poke the brain with any window you like, free via eth_call.
     pub fn predict(&self, x: Vec<i64>) -> i64 {
         let h = self.hidden.get().to::<u64>() as usize;
         let mut xin = [0i64; IN];
@@ -78,164 +222,78 @@ impl Brain {
         forward(&self.read_weights(), h, &xin).0
     }
 
-    /// One on-chain SGD step. Persists at most `write_cap` slots (round-robin),
-    /// so storage gas is bounded; unpersisted deltas are dropped by design.
-    /// Returns squared error (Q16).
-    pub fn lesson(&mut self, x: Vec<i64>, target: i64, write_cap: u64) -> u64 {
-        let h = self.hidden.get().to::<u64>() as usize;
-        let lr = self.lr_shift.get().to::<u64>() as u32;
-        let mut xin = [0i64; IN];
-        xin.copy_from_slice(&x[..IN]);
-
-        let mut w = self.read_weights();
-        let err2 = sgd_lesson(&mut w, h, &xin, target, lr);
-
-        let slots = w.len().div_ceil(4);
-        let cap = (write_cap as usize).min(slots);
-        let start = self.cursor.get().to::<u64>() as usize % slots;
-        for k in 0..cap {
-            let s = (start + k) % slots;
-            let end = (s * 4 + 4).min(w.len());
-            self.packed.setter(s).unwrap().set(pack(&w[s * 4..end]));
-        }
-        self.cursor.set(U64::from(((start + cap) % slots) as u64));
-        self.lessons.set(U64::from(self.lessons.get().to::<u64>() + 1));
-        err2 as u64
+    /// Everything a page needs in one call.
+    pub fn state(&self) -> (u64, u64, i64, u64, u64, U256) {
+        (
+            self.lessons.get().to::<u64>(),
+            self.beats_seen.get().to::<u64>(),
+            self.pending.get().try_into().unwrap_or(0i64),
+            self.has_pending.get().to::<u64>(),
+            self.last_t.get().to::<u64>(),
+            self.last_round.get(),
+        )
     }
 
-    pub fn lessons_done(&self) -> u64 {
-        self.lessons.get().to::<u64>()
+    /// The raw synapses, one call.
+    pub fn synapses(&self) -> Vec<U256> {
+        let h = self.hidden.get().to::<u64>() as usize;
+        let slots = param_count(h).div_ceil(4);
+        (0..slots).map(|s| self.packed.get(s).unwrap()).collect()
+    }
+
+    pub fn gaps(&self) -> Vec<u64> {
+        gaps_unpack(self.gaps_lo.get(), self.gaps_hi.get()).iter().map(|g| *g as u64).collect()
+    }
+
+    pub fn feed_address(&self) -> Address {
+        self.feed.get()
     }
 }
 
 #[cfg(test)]
-mod sim {
+mod pure {
     use super::net::*;
-    use alloc::vec::Vec;
 
-    /// GARCH(1,1) return generator (f64), quantized to Q16 with x100 scale.
-    struct Garch {
-        rng: Rng,
-        sigma2: f64,
-    }
-    impl Garch {
-        fn new(seed: u64) -> Self {
-            Garch { rng: Rng(seed), sigma2: 1e-4 }
-        }
-        fn next_ret(&mut self) -> f64 {
-            // approx normal: sum of 12 uniforms - 6
-            let mut n = -6.0;
-            for _ in 0..12 {
-                n += (self.rng.next() >> 11) as f64 / (1u64 << 53) as f64;
-            }
-            let r = self.sigma2.sqrt() * n;
-            self.sigma2 = 3e-6 + 0.12 * r * r + 0.85 * self.sigma2;
-            r
+    #[test]
+    fn feat_gap_matches_the_twin() {
+        // JS twin: Math.round(clamp(log2(gap/60), -4, 8) * 65536)
+        for (gap, want) in [(60u64, 0i64), (120, 65536), (30, -65536), (1, -4 * 65536), (100_000, 8 * 65536)] {
+            let got = feat_gap(gap);
+            assert!((got - want).abs() <= 2, "gap {gap}: got {got} want {want}");
         }
     }
 
-    fn q16(v: f64) -> i64 {
-        (v * ONE as f64) as i64
-    }
-
-    /// Online learning on GARCH data; returns (mse_net, mse_baseline) over the
-    /// final quarter. `cap_frac_4` = persisted slots per lesson in quarters
-    /// (4 = full persistence, 1 = 25% of slots round-robin).
-    fn run(h: usize, lr_shift: u32, cap_frac_4: usize, steps: usize) -> (f64, f64) {
-        const W: usize = 16;
-        let mut g = Garch::new(0xC0FFEE);
-        let rets: Vec<f64> = (0..steps + 2 * W).map(|_| g.next_ret().abs() * 100.0).collect();
-
-        let mut w = init_weights(h, 7);
-        let slots = w.len().div_ceil(4);
-        let cap = (slots * cap_frac_4 / 4).max(1);
-        let mut cursor = 0usize;
-
-        let mut base = q16(1.0); // running-mean baseline (EWMA)
-        let (mut se_net, mut se_base, mut cnt) = (0f64, 0f64, 0u64);
-
-        for t in W..steps {
-            let mut x = [0i64; IN];
-            for i in 0..IN {
-                x[i] = q16(rets[t - W + i]);
+    #[test]
+    fn gap_window_learns_clustered_vol() {
+        // alternating calm/storm regimes must beat a constant guess
+        let mut rng = Rng(9);
+        let mut gaps: Vec<u64> = Vec::new();
+        for block in 0..600 {
+            let calm = (block / 30) % 2 == 0;
+            for _ in 0..8 {
+                let base = if calm { 1800 } else { 120 };
+                gaps.push(base + (rng.next() % (base as u64)) );
             }
-            let target = q16(rets[t..t + W].iter().sum::<f64>() / W as f64);
-
-            let (y, _) = forward(&w, h, &x);
-            if t > steps * 3 / 4 {
-                let ef = (y - target) as f64 / ONE as f64;
-                let eb = (base - target) as f64 / ONE as f64;
-                se_net += ef * ef;
-                se_base += eb * eb;
+        }
+        let mut w = init_weights(32, 7);
+        let (mut se_net, mut se_c, mut cnt) = (0i128, 0i128, 0);
+        let mean = {
+            let s: u64 = gaps.iter().sum();
+            feat_gap(s / gaps.len() as u64)
+        };
+        for t in 16..gaps.len() {
+            let mut win = [0u32; 16];
+            for i in 0..16 { win[i] = gaps[t - 16 + i] as u32; }
+            let x = features(&win);
+            let target = feat_gap(gaps[t]);
+            if t > gaps.len() / 2 {
+                let p = forward(&w, 32, &x).0;
+                se_net += ((p - target) as i128).pow(2);
+                se_c += ((mean - target) as i128).pow(2);
                 cnt += 1;
             }
-
-            // partial persistence: train a copy, keep only `cap` slots
-            let mut trained = w.clone();
-            lesson(&mut trained, h, &x, target, lr_shift);
-            for k in 0..cap {
-                let s = (cursor + k) % slots;
-                let end = (s * 4 + 4).min(w.len());
-                w[s * 4..end].copy_from_slice(&trained[s * 4..end]);
-            }
-            cursor = (cursor + cap) % slots;
-
-            base = base + (target - base) / 64; // EWMA baseline
+            lesson(&mut w, 32, &x, target, 11);
         }
-        (se_net / cnt as f64, se_base / cnt as f64)
-    }
-
-    #[test]
-    fn learns_vol_full_persistence() {
-        let (net, base) = run(32, 11, 4, 40_000);
-        std::println!("full persistence: net mse {net:.5} vs baseline {base:.5}");
-        assert!(net < base * 0.9, "net {net} not < 0.9x baseline {base}");
-    }
-
-    #[test]
-    fn learns_vol_quarter_persistence() {
-        let (net, base) = run(32, 11, 1, 40_000);
-        std::println!("quarter persistence: net mse {net:.5} vs baseline {base:.5}");
-        assert!(net < base, "net {net} not < baseline {base}");
-    }
-
-    /// Scheme B: buffer samples, apply 4 SGD steps + one full weight write
-    /// every 4th crank. Same write gas as 25% round-robin, full learning.
-    #[test]
-    fn learns_vol_batched_writes() {
-        const W: usize = 16;
-        let steps = 40_000;
-        let (h, lr_shift) = (32usize, 11u32);
-        let mut g = Garch::new(0xC0FFEE);
-        let rets: Vec<f64> = (0..steps + 2 * W).map(|_| g.next_ret().abs() * 100.0).collect();
-        let mut w = init_weights(h, 7);
-        let mut batch: Vec<([i64; IN], i64)> = Vec::new();
-        let mut base = q16(1.0);
-        let (mut se_net, mut se_base, mut cnt) = (0f64, 0f64, 0u64);
-        for t in W..steps {
-            let mut x = [0i64; IN];
-            for i in 0..IN {
-                x[i] = q16(rets[t - W + i]);
-            }
-            let target = q16(rets[t..t + W].iter().sum::<f64>() / W as f64);
-            let (y, _) = forward(&w, h, &x);
-            if t > steps * 3 / 4 {
-                let ef = (y - target) as f64 / ONE as f64;
-                let eb = (base - target) as f64 / ONE as f64;
-                se_net += ef * ef;
-                se_base += eb * eb;
-                cnt += 1;
-            }
-            batch.push((x, target));
-            if batch.len() == 4 {
-                for (bx, bt) in batch.drain(..) {
-                    lesson(&mut w, h, &bx, bt, lr_shift);
-                }
-            }
-            base = base + (target - base) / 64;
-        }
-        let (net, base) = (se_net / cnt as f64, se_base / cnt as f64);
-        std::println!("batched writes: net mse {net:.5} vs baseline {base:.5}");
-        assert!(net < base * 0.9, "net {net} not < 0.9x baseline {base}");
+        assert!(cnt > 0 && se_net * 10 < se_c * 9, "net {se_net} not < 0.9x const {se_c}");
     }
 }
