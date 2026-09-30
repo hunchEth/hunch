@@ -238,3 +238,4 @@ mod sim {
         std::println!("batched writes: net mse {net:.5} vs baseline {base:.5}");
         assert!(net < base * 0.9, "net {net} not < 0.9x baseline {base}");
     }
+}
