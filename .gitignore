@@ -1,4 +1,16 @@
 /target
-/node_modules
 .deploy-wallet.json
+evm/cache
+evm/out
+
+# these live locally for the hunch.guru deployment and are not
+# part of the contract repo
+web/
+keeper.mjs
 keeper.log
+Procfile
+nixpacks.toml
+.railwayignore
+package.json
+package-lock.json
+/node_modules

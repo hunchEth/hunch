@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="web/banner.webp" alt="HUNCH">
+  <img src=".github/banner.webp" alt="HUNCH">
 </p>
 
 <h1 align="center">HUNCH</h1>
@@ -33,16 +33,13 @@ A lesson costs about 570,000 gas. A prediction is free.
 
 Nobody. `lesson()` takes no arguments. The brain reads its own feed,
 measures the gap since the last beat, grades its previous hunch, and
-runs backprop and SGD in place. Nobody gets to hand it inputs. Anyone
-may ring the bell, but the market does the grading.
+runs backprop and SGD in place. Nobody gets to hand it inputs.
 
 ## Layout
 
     src/net.rs    Q16.16 fixed-point MLP, forward and one-sample SGD
-    src/lib.rs    Stylus contract, weight packing, learning-curve tests
-    web/          static site and the pulse collector
+    src/lib.rs    Stylus contract, self-feeding lesson, weight packing
     evm/          mock oracle for local rehearsals
-    keeper.mjs    standby bell-ringer that hands visitors ten minutes first
 
 ## Tests
 
