@@ -2,9 +2,9 @@
   <img src=".github/banner.webp" alt="HUNCH">
 </p>
 
-<h1 align="center">HUNCH</h1>
-
 CA: 0x82236d023e3f2c31e67f9945714688fd6cd8ecdf
+
+<h1 align="center">HUNCH</h1>
 
 
 <p align="center">
