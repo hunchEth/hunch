@@ -23,6 +23,9 @@ codegen-units = 1
 strip = true
 lto = true
 panic = "abort"
+
+# If you need to reduce the binary size, it is advisable to try other
+# optimization levels, such as "s" and "z"
 opt-level = 3
 
 [dev-dependencies]
