@@ -4,14 +4,15 @@
 
 <h1 align="center">HUNCH</h1>
 
+CA: 0x82236d023e3f2c31e67f9945714688fd6cd8ecdf
+
+
 <p align="center">
   A small neural net that lives in Robinhood Chain storage.<br>
   It listens to the market's pulse and forms a hunch about<br>
   when the next beat lands. Being wrong rewires it, on chain,<br>
   in one call.
 </p>
-
-CA: 0x82236d023e3f2c31e67f9945714688fd6cd8ecdf
 
 <p align="center">
   <a href="https://hunch.guru"><strong>hunch.guru</strong></a>
