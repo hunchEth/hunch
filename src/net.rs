@@ -89,3 +89,31 @@ pub fn lesson(w: &mut [i64], h: usize, x: &[i64; IN], target: i64, lr_shift: u32
     }
     qmul(e, e)
 }
+
+/// Q16 feature from a beat gap in seconds: 65536 * log2(gap/60), clamped
+/// to [-4, 8] like the off-chain twin.
+pub fn feat_gap(gap: u64) -> i64 {
+    let x = gap.max(1);
+    let msb = 63 - x.leading_zeros() as i64;
+    let mut y: u128 = ((x as u128) << 32) >> msb; // [1,2) in Q32
+    let mut frac: i64 = 0;
+    for _ in 0..16 {
+        y = (y * y) >> 32;
+        frac <<= 1;
+        if y >= 2u128 << 32 {
+            y >>= 1;
+            frac |= 1;
+        }
+    }
+    const LOG2_60_Q16: i64 = 387113;
+    ((msb << 16) | frac).wrapping_sub(LOG2_60_Q16).clamp(-4 * 65536, 8 * 65536)
+}
+
+/// Feature window from the 16 most recent gaps (oldest first).
+pub fn features(gaps: &[u32; 16]) -> [i64; IN] {
+    let mut x = [0i64; IN];
+    for i in 0..IN {
+        x[i] = feat_gap(gaps[i] as u64);
+    }
+    x
+}
